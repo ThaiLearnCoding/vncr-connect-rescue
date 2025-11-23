@@ -41,7 +41,7 @@ const calculatePriority = (demographics: Demographics, needs: string): 'High' | 
 const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
   try {
     const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
-        headers: { 'User-Agent': 'VNCR-Connect-Rescue/1.0' }
+      headers: { 'User-Agent': 'VNCR-Connect-Rescue/1.0' }
     });
     const data = await response.json();
     return data.display_name || "Vị trí đã định vị từ tọa độ";
@@ -53,24 +53,24 @@ const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
 
 // 3. OpenStreetMap Nominatim API for Forward Geocoding (Search Address -> Coords)
 const searchLocation = async (query: string): Promise<{ lat: number, lng: number, display_name: string } | null> => {
-    try {
-        // Search specifically in Vietnam
-        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=vn&limit=1`, {
-            headers: { 'User-Agent': 'VNCR-Connect-Rescue/1.0' }
-        });
-        const data = await response.json();
-        if (data && data.length > 0) {
-            return {
-                lat: parseFloat(data[0].lat),
-                lng: parseFloat(data[0].lon),
-                display_name: data[0].display_name
-            };
-        }
-        return null;
-    } catch (e) {
-        console.error("Location search failed", e);
-        return null;
+  try {
+    // Search specifically in Vietnam
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=vn&limit=1`, {
+      headers: { 'User-Agent': 'VNCR-Connect-Rescue/1.0' }
+    });
+    const data = await response.json();
+    if (data && data.length > 0) {
+      return {
+        lat: parseFloat(data[0].lat),
+        lng: parseFloat(data[0].lon),
+        display_name: data[0].display_name
+      };
     }
+    return null;
+  } catch (e) {
+    console.error("Location search failed", e);
+    return null;
+  }
 };
 
 // Helper: Convert DMS to Decimal Degrees
@@ -94,9 +94,9 @@ function parseCoordinatesFromInput(input: string): { lat: number, lng: number } 
   // B. Try DMS pattern: 13°02'10.7"N 109°18'48.0"E
   // Improved regex to handle various symbols (degrees, quotes, smart quotes) and spacing
   const dmsRegex = /(\d+)[°º\s]+(\d+)[′'’\s]+(\d+(\.\d+)?)["″”]?\s*([NS])[,;\s]+(\d+)[°º\s]+(\d+)[′'’\s]+(\d+(\.\d+)?)["″”]?\s*([EW])/i;
-  
+
   const dmsMatch = input.match(dmsRegex);
-  
+
   if (dmsMatch) {
     const latDeg = parseFloat(dmsMatch[1]);
     const latMin = parseFloat(dmsMatch[2]);
@@ -123,7 +123,7 @@ export const analyzeEmergencyReport = async (
   demographics: Demographics,
   userCoords: { lat: number | null; lng: number | null }
 ): Promise<AnalysisResult> => {
-  
+
   // A. Determine Priority
   const priority = calculatePriority(demographics, needsInput);
 
@@ -141,24 +141,24 @@ export const analyzeEmergencyReport = async (
   const parsedCoords = parseCoordinatesFromInput(locationInput);
 
   if (parsedCoords) {
-      coordinates = parsedCoords;
-      // Get address name from these coordinates
-      const address = await reverseGeocode(coordinates.lat, coordinates.lng);
-      if (address) verifiedLocation = address;
-  } 
+    coordinates = parsedCoords;
+    // Get address name from these coordinates
+    const address = await reverseGeocode(coordinates.lat, coordinates.lng);
+    if (address) verifiedLocation = address;
+  }
   // Step 2: Browser GPS
   else if (userCoords.lat && userCoords.lng) {
-      coordinates = { lat: userCoords.lat, lng: userCoords.lng };
-      const address = await reverseGeocode(userCoords.lat, userCoords.lng);
-      if (address) verifiedLocation = address;
-  } 
+    coordinates = { lat: userCoords.lat, lng: userCoords.lng };
+    const address = await reverseGeocode(userCoords.lat, userCoords.lng);
+    if (address) verifiedLocation = address;
+  }
   // Step 3: Text Search
   else {
-      const searchResult = await searchLocation(locationInput);
-      if (searchResult) {
-          coordinates = { lat: searchResult.lat, lng: searchResult.lng };
-          verifiedLocation = searchResult.display_name;
-      }
+    const searchResult = await searchLocation(locationInput);
+    if (searchResult) {
+      coordinates = { lat: searchResult.lat, lng: searchResult.lng };
+      verifiedLocation = searchResult.display_name;
+    }
   }
 
   // Generate a simple summary string
@@ -172,18 +172,18 @@ export const analyzeEmergencyReport = async (
   };
 };
 
-export const generateRegionalSummary = async (requests: any[]): Promise<string> => {
-    return "Tính năng tóm tắt AI đang tạm tắt. Vui lòng xem bản đồ và biểu đồ thống kê để phân tích tình hình.";
+export const generateRegionalSummary = async (): Promise<string> => {
+  return "Tính năng tóm tắt AI đang tạm tắt. Vui lòng xem bản đồ và biểu đồ thống kê để phân tích tình hình.";
 }
 
 export const findLocationCoordinates = async (query: string): Promise<{ lat: number, lng: number } | null> => {
-    // Also try to parse coordinates in the search bar
-    const parsed = parseCoordinatesFromInput(query);
-    if (parsed) return parsed;
+  // Also try to parse coordinates in the search bar
+  const parsed = parseCoordinatesFromInput(query);
+  if (parsed) return parsed;
 
-    const result = await searchLocation(query);
-    if (result) {
-        return { lat: result.lat, lng: result.lng };
-    }
-    return null;
+  const result = await searchLocation(query);
+  if (result) {
+    return { lat: result.lat, lng: result.lng };
+  }
+  return null;
 }
