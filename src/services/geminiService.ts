@@ -37,17 +37,35 @@ const calculatePriority = (demographics: Demographics, needs: string): 'High' | 
   return 'Low';
 };
 
+// Helper to fetch with timeout
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 5000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+};
+
 // 2. OpenStreetMap Nominatim API for Reverse Geocoding (Coords -> Address)
 const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
   try {
-    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+    const response = await fetchWithTimeout(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
       headers: { 'User-Agent': 'VNCR-Connect-Rescue/1.0' }
     });
     const data = await response.json();
-    return data.display_name || "Vị trí đã định vị từ tọa độ";
+    return data.display_name || "Vị trí đã định vị từ bản đồ";
   } catch (e) {
     console.error("Reverse geocode failed", e);
-    return "";
+    // Return a fallback string instead of hanging or empty
+    return `Vị trí ghim: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
   }
 };
 
@@ -55,7 +73,7 @@ const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
 const searchLocation = async (query: string): Promise<{ lat: number, lng: number, display_name: string } | null> => {
   try {
     // Search specifically in Vietnam
-    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=vn&limit=1`, {
+    const response = await fetchWithTimeout(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=vn&limit=1`, {
       headers: { 'User-Agent': 'VNCR-Connect-Rescue/1.0' }
     });
     const data = await response.json();

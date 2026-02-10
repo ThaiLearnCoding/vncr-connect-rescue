@@ -7,7 +7,7 @@ export interface GroundingChunk {
     uri: string;
     title: string;
     placeAnswerSources?: {
-        reviewSnippets?: unknown[];
+      reviewSnippets?: unknown[];
     };
   };
 }
@@ -20,6 +20,15 @@ export interface Demographics {
   injured: number;
   children0to6: number;
   children6to14: number;
+  needyName?: string; // Tên cụ thể của người cần cứu (nếu khác người báo tin)
+}
+
+export interface RescueInfo {
+  supporterName: string;
+  supporterPhone: string;
+  peopleRescued: number;
+  timestamp: number;
+  notes?: string;
 }
 
 export interface EmergencyRequest {
@@ -40,6 +49,9 @@ export interface EmergencyRequest {
   priority: 'High' | 'Medium' | 'Low'; // Derived by Gemini
   groundingLinks: GroundingChunk[]; // Map links from Gemini
   aiAnalysis: string; // The text response from Gemini
+  images?: string[]; // Base64 of uploaded images
+  rescueInfo?: RescueInfo; // Thông tin cứu hộ sau khi hoàn thành
+  notes?: string; // Ghi chú thêm từ người cần cứu
 }
 
 export type AppMode = 'landing' | 'needy' | 'supporter';

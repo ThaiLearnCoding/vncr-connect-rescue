@@ -1,28 +1,75 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { EmergencyRequest } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Layers, Users, Filter, List } from 'lucide-react';
+import { Layers, Users, Filter, List, CheckCircle, X } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import MarkerClusterGroup from 'react-leaflet-cluster';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
-declare global {
-  interface Window {
-    L: any;
-  }
-}
+// Fix icons (reusing the same logic from NeedyForm if we wanted, 
+// but here we use DivIcon predominantly, except maybe default markers are not used)
+// Note: We use DivIcon for everything here so standard markers are not as critical,
+// but good to have if we fall back.
+
+// Declare global is not needed anymore if we move away from window.L
+// declare global {
+//   interface Window {
+//     L: any;
+//   }
+// }
 
 interface SupporterDashboardProps {
   requests: EmergencyRequest[];
+  onUpdateRequest?: (req: EmergencyRequest) => void;
 }
 
-export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests }) => {
+export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests, onUpdateRequest }) => {
   // Filter States
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterLocation, setFilterLocation] = useState<string>('all');
+  const [showResolved, setShowResolved] = useState(false);
   const [isFiltered, setIsFiltered] = useState(false);
 
-  // Map References
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<any>(null);
-  const clusterGroupRef = useRef<any>(null);
+  // Rescue Modal State
+  const [selectedReqForRescue, setSelectedReqForRescue] = useState<EmergencyRequest | null>(null);
+  const [rescueForm, setRescueForm] = useState({
+    supporterName: '',
+    supporterPhone: '',
+    peopleRescued: 0,
+    notes: ''
+  });
+
+  const handleOpenRescueModal = (req: EmergencyRequest) => {
+    setSelectedReqForRescue(req);
+    // Pre-fill people count just in case users want default
+    setRescueForm({
+      supporterName: '',
+      supporterPhone: '',
+      peopleRescued: req.demographics.totalPeople || 0,
+      notes: ''
+    });
+  };
+
+  const handleRescueSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedReqForRescue || !onUpdateRequest) return;
+
+    const updatedReq: EmergencyRequest = {
+      ...selectedReqForRescue,
+      status: 'resolved',
+      rescueInfo: {
+        supporterName: rescueForm.supporterName,
+        supporterPhone: rescueForm.supporterPhone,
+        peopleRescued: Number(rescueForm.peopleRescued),
+        timestamp: Date.now(),
+        notes: rescueForm.notes
+      }
+    };
+
+    onUpdateRequest(updatedReq);
+    setSelectedReqForRescue(null); // Close modal
+  };
 
   // Extract unique locations for the dropdown
   const uniqueLocations = useMemo(() => {
@@ -32,7 +79,7 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
 
   // Chart data
   const needsCount: Record<string, number> = {};
-  requests.forEach(r => {
+  requests.filter(r => r.status !== 'resolved').forEach(r => {
     const n = r.needs.toLowerCase();
     let category = "Khác";
     if (n.includes("mì") || n.includes("gạo") || n.includes("ăn") || n.includes("lương thực")) category = "Thực phẩm";
@@ -48,153 +95,132 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
 
   // Filtered Data for LIST view
   const filteredRequests = useMemo(() => {
-    if (!isFiltered) return []; // Empty if not filtered yet
     return requests.filter(req => {
-      const matchesPriority = filterPriority === 'all' || req.priority === filterPriority;
-      const matchesLocation = filterLocation === 'all' || req.verifiedLocation === filterLocation;
-      return matchesPriority && matchesLocation;
+      // 1. Resolve State Filter
+      if (!showResolved && req.status === 'resolved') return false;
+      if (showResolved && req.status !== 'resolved') return false;
+
+      // 2. UI Filters (only apply if isFiltered is true)
+      if (isFiltered) {
+        const matchesPriority = filterPriority === 'all' || req.priority === filterPriority;
+        const matchesLocation = filterLocation === 'all' || req.verifiedLocation === filterLocation;
+        return matchesPriority && matchesLocation;
+      }
+      return true;
     });
-  }, [requests, filterPriority, filterLocation, isFiltered]);
+  }, [requests, filterPriority, filterLocation, isFiltered, showResolved]);
 
   const handleApplyFilter = () => {
     setIsFiltered(true);
   };
 
-  // Map Initialization and Update
-  useEffect(() => {
-    if (!mapContainerRef.current || !window.L) return;
+  // Helper to create cluster icon
+  const createClusterCustomIcon = (cluster: any) => {
+    const childMarkers = cluster.getAllChildMarkers();
+    let totalPeopleInCluster = 0;
+    // Inspect child properties (React-leaflet-cluster preserves props? Or we access options?)
+    // childMarkers are internal Leaflet markers. We need to pass data through options.
+    // However, react-leaflet renders components.
+    // The standard MarkerClusterGroup uses basic L.Marker. 
+    // We'll see if we can get totalPeople from attached data.
+    // Actually, getting data out of child markers in React Leaflet Cluster custom icon function is tricky 
+    // because the markers are created by React.
 
-    if (!mapInstanceRef.current) {
-      const map = window.L.map(mapContainerRef.current).setView([13.088, 109.300], 12); // Default Tuy Hoa, Phu Yen
+    // Simplification: Count number of markers (families).
+    // Or if we can access the 'options' or 'props' of the marker.
+    // In L.Marker created by react-leaflet, options might contain what we passed.
 
-      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap'
-      }).addTo(map);
+    // Let's iterate using simple count first, or try to access options.peopleCount if we can inject it.
+    // We can inject it using `eventHandlers` or `icon` options? No.
+    // We can use the native "title" or "alt" for data passing if desperate, but let's try direct property access used in the old code.
+    // The old code: `totalPeopleInCluster += (m.options.peopleCount || 0);`
+    // We can pass `peopleCount` prop to Marker? React-leaflet Marker props are passed to options? YES, extra props are passed to options.
 
-      mapInstanceRef.current = map;
-
-      // Initialize MarkerClusterGroup with RED theme logic
-      const markers = window.L.markerClusterGroup({
-        showCoverageOnHover: false,
-        maxClusterRadius: 50,
-        iconCreateFunction: function (cluster: any) {
-          const childMarkers = cluster.getAllChildMarkers();
-          let totalPeopleInCluster = 0;
-          childMarkers.forEach((m: any) => {
-            totalPeopleInCluster += (m.options.peopleCount || 0);
-          });
-
-          let size = 40;
-          let colorClass = "bg-red-400/90";
-
-          if (totalPeopleInCluster > 50) {
-            size = 60;
-            colorClass = "bg-red-800/95";
-          } else if (totalPeopleInCluster > 10) {
-            size = 50;
-            colorClass = "bg-red-600/90";
-          }
-
-          return window.L.divIcon({
-            html: `<div class="${colorClass} text-white rounded-full flex items-center justify-center font-bold border-2 border-white/50 shadow-lg backdrop-blur-sm" style="width: ${size}px; height: ${size}px; font-size: ${size / 2.5}px;">${totalPeopleInCluster}</div>`,
-            className: 'custom-cluster-icon bg-transparent border-none',
-            iconSize: window.L.point(size, size)
-          });
-        }
-      });
-      clusterGroupRef.current = markers;
-      map.addLayer(markers);
-    }
-
-    const clusterGroup = clusterGroupRef.current;
-    if (clusterGroup) {
-      clusterGroup.clearLayers();
-
-      requests.forEach(req => {
-        if (req.coordinates) {
-          const { lat, lng } = req.coordinates;
-          const peopleCount = req.demographics?.totalPeople || 1;
-
-          // Color Logic based on Priority
-          let bgColor = 'bg-blue-500';
-          let textColor = 'text-white';
-          let borderColor = 'border-white';
-
-          if (req.priority === 'High') {
-            bgColor = 'bg-red-600';
-          } else if (req.priority === 'Medium') {
-            bgColor = 'bg-orange-500';
-          } else {
-            bgColor = 'bg-yellow-400';
-            textColor = 'text-slate-900';
-            borderColor = 'border-white';
-          }
-
-          // --- BUILD POPUP HTML CONTENT ---
-          const childrenCount = (req.demographics.children0to6 || 0) + (req.demographics.children6to14 || 0);
-          let demographicsHtml = '';
-
-          if (req.demographics.pregnant > 0) demographicsHtml += `<div class="flex items-center gap-1 text-pink-600 font-semibold text-xs mt-1"><span>• ${req.demographics.pregnant} Mẹ bầu</span></div>`;
-          if (childrenCount > 0) demographicsHtml += `<div class="flex items-center gap-1 text-blue-600 font-semibold text-xs mt-1"><span>• ${childrenCount} Trẻ em</span></div>`;
-          if (req.demographics.elderly > 0) demographicsHtml += `<div class="flex items-center gap-1 text-slate-600 font-semibold text-xs mt-1"><span>• ${req.demographics.elderly} Người cao tuổi</span></div>`;
-          if (req.demographics.injured > 0) demographicsHtml += `<div class="flex items-center gap-1 text-red-600 font-bold text-xs mt-1"><span>• ${req.demographics.injured} Người bị thương</span></div>`;
-          if (req.demographics.disabled > 0) demographicsHtml += `<div class="flex items-center gap-1 text-purple-600 font-semibold text-xs mt-1"><span>• ${req.demographics.disabled} Người khuyết tật</span></div>`;
-
-          const popupContent = `
-                <div class="p-2 font-sans min-w-[240px]">
-                    <h3 class="font-bold text-slate-800 text-base border-b pb-1 mb-2">${req.name}</h3>
-                    <div class="flex items-center gap-2 mb-2">
-                         <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ${req.priority === 'High' ? 'bg-red-100 text-red-700' :
-              req.priority === 'Medium' ? 'bg-orange-100 text-orange-700' : 'bg-yellow-100 text-yellow-800'
-            }">Ưu tiên: ${req.priority}</span>
-                         <span class="text-sm font-bold text-slate-700 flex items-center">${peopleCount} người</span>
-                    </div>
-                    
-                    <div class="mb-2">
-                        <p class="text-xs font-bold text-slate-500 uppercase">Vị trí:</p>
-                        <p class="text-sm text-slate-800 leading-tight">${req.verifiedLocation}</p>
-                    </div>
-
-                    <div class="mb-2">
-                        <p class="text-xs font-bold text-slate-500 uppercase">Cần hỗ trợ:</p>
-                        <p class="text-sm text-red-600 font-medium">${req.needs}</p>
-                    </div>
-
-                    ${demographicsHtml ? `<div class="bg-slate-50 p-2 rounded mt-2 border border-slate-100">${demographicsHtml}</div>` : ''}
-
-                    <div class="mt-2 text-[10px] text-slate-400 text-right">
-                        ${new Date(req.timestamp).toLocaleString('vi-VN')}
-                    </div>
-                </div>
-                `;
-
-          const markerIcon = window.L.divIcon({
-            html: `<div class="${bgColor} ${textColor} rounded-full flex items-center justify-center font-bold border-2 ${borderColor} shadow-md transform hover:scale-110 transition-transform" style="width: 30px; height: 30px; font-size: 14px;">${peopleCount}</div>`,
-            className: 'custom-pin-marker bg-transparent border-none',
-            iconSize: window.L.point(30, 30)
-          });
-
-          const marker = window.L.marker([lat, lng], {
-            icon: markerIcon,
-            peopleCount: peopleCount
-          });
-
-          marker.bindPopup(popupContent);
-          clusterGroup.addLayer(marker);
-        }
-      });
-
-      if (requests.length > 0) {
-        const bounds = window.L.latLngBounds(requests.map(r => r.coordinates ? [r.coordinates.lat, r.coordinates.lng] : null).filter(Boolean));
-        if (bounds.isValid()) {
-          mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
-        }
+    childMarkers.forEach((m: any) => {
+      // Accessing options passed to the marker
+      // specific custom props might not be passed through by react-leaflet, 
+      // so we use 'title' as a reliable data vessel.
+      if (m.options.title) {
+        totalPeopleInCluster += parseInt(m.options.title);
+      } else {
+        totalPeopleInCluster += 1;
       }
+    });
+
+    let size = 40;
+    let colorClass = "bg-red-400/90";
+
+    if (totalPeopleInCluster > 50) {
+      size = 60;
+      colorClass = "bg-red-800/95";
+    } else if (totalPeopleInCluster > 10) {
+      size = 50;
+      colorClass = "bg-red-600/90";
     }
-  }, [requests]);
+
+    return L.divIcon({
+      html: `<div class="${colorClass} text-white rounded-full flex items-center justify-center font-bold border-2 border-white/50 shadow-lg backdrop-blur-sm" style="width: ${size}px; height: ${size}px; font-size: ${size / 2.5}px;">${totalPeopleInCluster}</div>`,
+      className: 'custom-cluster-icon bg-transparent border-none',
+      iconSize: L.point(size, size)
+    });
+  };
 
   return (
-    <div className="max-w-7xl mx-auto p-4 space-y-8 animate-fade-in pb-20">
+    <div className="max-w-7xl mx-auto p-4 space-y-8 animate-fade-in pb-20 relative">
+
+      {/* Rescue Modal */}
+      {selectedReqForRescue && (
+        <div className="fixed inset-0 bg-black/50 z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-up">
+            <div className="bg-indigo-600 p-4 flex justify-between items-center text-white">
+              <h3 className="font-bold text-lg flex items-center gap-2"><CheckCircle className="w-5 h-5" /> Báo Cáo Cứu Hộ Thành Công</h3>
+              <button onClick={() => setSelectedReqForRescue(null)} className="hover:bg-indigo-700 p-1 rounded"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={handleRescueSubmit} className="p-6 space-y-4">
+              <div className="p-3 bg-slate-50 rounded border border-slate-200 text-sm">
+                <span className="font-bold text-slate-700">Đang cứu hộ cho:</span> {selectedReqForRescue.name}
+                <br />
+                <span className="font-bold text-slate-700">Tại:</span> {selectedReqForRescue.verifiedLocation}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Tên người/đội cứu hộ</label>
+                <input required className="w-full p-2 border rounded" placeholder="VD: Đội Cứu Hộ Số 1"
+                  value={rescueForm.supporterName}
+                  onChange={e => setRescueForm({ ...rescueForm, supporterName: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Số điện thoại liên hệ</label>
+                <input required className="w-full p-2 border rounded" placeholder="09xxxx..."
+                  value={rescueForm.supporterPhone}
+                  onChange={e => setRescueForm({ ...rescueForm, supporterPhone: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Số người đã cứu được</label>
+                <input required type="number" min="1" className="w-full p-2 border rounded font-bold text-lg"
+                  value={rescueForm.peopleRescued}
+                  onChange={e => setRescueForm({ ...rescueForm, peopleRescued: Number(e.target.value) })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Ghi chú thêm</label>
+                <textarea className="w-full p-2 border rounded" placeholder="Tình trạng nạn nhân, nơi đưa về..."
+                  rows={2}
+                  value={rescueForm.notes}
+                  onChange={e => setRescueForm({ ...rescueForm, notes: e.target.value })}
+                />
+              </div>
+
+              <button type="submit" className="w-full py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition shadow-lg mt-2">
+                Xác Nhận Đã Cứu Hộ
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Map Section */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden relative">
@@ -205,7 +231,120 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
           </h2>
         </div>
 
-        <div ref={mapContainerRef} className="w-full h-[600px] bg-slate-100 z-0" />
+        <div className="w-full h-[600px] bg-slate-100 z-0">
+          <MapContainer
+            center={[13.088, 109.300]}
+            zoom={12}
+            style={{ height: '100%', width: '100%' }}
+          >
+            <TileLayer
+              attribution='&copy; OpenStreetMap'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+
+            <MarkerClusterGroup
+              chunkedLoading
+              iconCreateFunction={createClusterCustomIcon}
+              showCoverageOnHover={false}
+              maxClusterRadius={50}
+            >
+              {requests.map(req => {
+                if (!req.coordinates) return null;
+                const peopleCount = req.demographics?.totalPeople || 1;
+
+                // Color Logic
+                let bgColor = 'bg-blue-500';
+                let textColor = 'text-white';
+                let borderColor = 'border-white';
+
+                if (req.status === 'resolved') {
+                  bgColor = 'bg-green-500';
+                } else if (req.priority === 'High') {
+                  bgColor = 'bg-red-600';
+                } else if (req.priority === 'Medium') {
+                  bgColor = 'bg-orange-500';
+                } else {
+                  bgColor = 'bg-yellow-400';
+                  textColor = 'text-slate-900';
+                }
+
+                const customIcon = L.divIcon({
+                  html: `<div class="${bgColor} ${textColor} rounded-full flex items-center justify-center font-bold border-2 ${borderColor} shadow-md transform hover:scale-110 transition-transform" style="width: 30px; height: 30px; font-size: 14px;">${peopleCount}</div>`,
+                  className: 'custom-pin-marker bg-transparent border-none',
+                  iconSize: [30, 30]
+                });
+
+                return (
+                  <Marker
+                    key={req.id}
+                    position={[req.coordinates.lat, req.coordinates.lng]}
+                    icon={customIcon}
+                    // Pass peopleCount via title for clustering calculation
+                    title={peopleCount.toString()}
+                  >
+                    <Popup>
+                      <div className="p-2 font-sans min-w-[240px]">
+                        <h3 className="font-bold text-slate-800 text-base border-b pb-1 mb-2">{req.name}</h3>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${req.priority === 'High' ? 'bg-red-100 text-red-700' :
+                            req.priority === 'Medium' ? 'bg-orange-100 text-orange-700' :
+                              'bg-yellow-100 text-yellow-800'
+                            }`}>
+                            Ưu tiên: {req.priority}
+                          </span>
+                          <span className="text-sm font-bold text-slate-700 flex items-center">{peopleCount} người</span>
+                        </div>
+
+                        <div className="mb-2">
+                          <p className="text-xs font-bold text-slate-500 uppercase">Vị trí:</p>
+                          <p className="text-sm text-slate-800 leading-tight">{req.verifiedLocation}</p>
+                        </div>
+
+                        <div className="mb-2">
+                          <p className="text-xs font-bold text-slate-500 uppercase">Cần hỗ trợ:</p>
+                          <p className="text-sm text-red-600 font-medium">{req.needs}</p>
+                        </div>
+
+                        {(req.images?.length || 0) > 0 && (
+                          <div className="mb-2">
+                            <p className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1 py-0.5 rounded inline-block border border-indigo-100">
+                              📷 Có {req.images?.length} ảnh đính kèm
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="bg-slate-50 p-2 rounded mt-2 border border-slate-100 grid grid-cols-1 gap-1">
+                          {req.demographics.pregnant > 0 && <div className="text-pink-600 font-semibold text-xs">• {req.demographics.pregnant} Mẹ bầu</div>}
+                          {(req.demographics.children0to6 + req.demographics.children6to14) > 0 && <div className="text-blue-600 font-semibold text-xs">• {(req.demographics.children0to6 + req.demographics.children6to14)} Trẻ em</div>}
+                          {req.demographics.elderly > 0 && <div className="text-slate-600 font-semibold text-xs">• {req.demographics.elderly} Người cao tuổi</div>}
+                          {req.demographics.injured > 0 && <div className="text-red-600 font-bold text-xs">• {req.demographics.injured} Người bị thương</div>}
+                          {req.demographics.disabled > 0 && <div className="text-purple-600 font-semibold text-xs">• {req.demographics.disabled} Người khuyết tật</div>}
+                        </div>
+
+                        <div className="mt-2 text-[10px] text-slate-400 text-right">
+                          {new Date(req.timestamp).toLocaleString('vi-VN')}
+                        </div>
+
+                        {req.status !== 'resolved' ? (
+                          <button
+                            onClick={() => handleOpenRescueModal(req)}
+                            className="w-full mt-2 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded flex items-center justify-center gap-1 hover:bg-indigo-700 transition"
+                          >
+                            <CheckCircle className="w-3 h-3" /> Cập nhật cứu hộ
+                          </button>
+                        ) : (
+                          <div className="w-full mt-2 py-1.5 bg-green-100 text-green-700 text-xs font-bold rounded flex items-center justify-center gap-1 border border-green-200">
+                            <CheckCircle className="w-3 h-3" /> Đã được cứu bởi {req.rescueInfo?.supporterName}
+                          </div>
+                        )}
+                      </div>
+                    </Popup>
+                  </Marker>
+                );
+              })}
+            </MarkerClusterGroup>
+          </MapContainer>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -227,7 +366,18 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                   <option value="Low">Thấp</option>
                 </select>
               </div>
-              <div className="w-full md:w-1/2">
+
+              <div className="flex items-center pt-5 pl-2">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700 text-sm">
+                  <input type="checkbox" className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                    checked={showResolved}
+                    onChange={(e) => setShowResolved(e.target.checked)}
+                  />
+                  Hiển thị ca đã cứu
+                </label>
+              </div>
+
+              <div className="w-full md:w-1/3">
                 <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Khu vực (Phường/Xã)</label>
                 <select
                   className="w-full p-2 rounded border border-slate-300 text-sm"
@@ -266,7 +416,7 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
               </div>
               {filteredRequests.map(req => (
                 <div key={req.id} className={`bg-white rounded-xl p-5 shadow-sm border-l-4 transition-all hover:shadow-md ${req.priority === 'High' ? 'border-l-red-500' :
-                    req.priority === 'Medium' ? 'border-l-orange-500' : 'border-l-yellow-400'
+                  req.priority === 'Medium' ? 'border-l-orange-500' : 'border-l-yellow-400'
                   }`}>
                   <div className="flex justify-between items-start mb-3">
                     <div>
@@ -278,7 +428,7 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                       </div>
                     </div>
                     <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase ${req.priority === 'High' ? 'bg-red-100 text-red-700' :
-                        req.priority === 'Medium' ? 'bg-orange-100 text-orange-700' : 'bg-yellow-100 text-yellow-800'
+                      req.priority === 'Medium' ? 'bg-orange-100 text-orange-700' : 'bg-yellow-100 text-yellow-800'
                       }`}>
                       Ưu tiên {req.priority}
                     </span>
@@ -301,6 +451,24 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                     {req.demographics.injured > 0 && <span className="text-red-700 font-semibold px-2 py-0.5 bg-red-100 rounded">Bị thương: {req.demographics.injured}</span>}
                     {req.demographics.disabled > 0 && <span className="text-purple-700 font-semibold px-2 py-0.5 bg-purple-100 rounded">Khuyết tật: {req.demographics.disabled}</span>}
                   </div>
+
+                  {req.notes && (
+                    <div className="mt-3 bg-yellow-50 p-3 rounded border border-yellow-200 text-sm text-yellow-900 icon-text relative">
+                      <span className="font-bold block text-xs uppercase mb-1 text-yellow-700">Ghi chú từ người dân:</span>
+                      "{req.notes}"
+                    </div>
+                  )}
+
+                  {req.images && req.images.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-bold text-slate-500 mb-2 uppercase">Hình ảnh hiện trường:</p>
+                      <div className="flex gap-2 overflow-x-auto pb-2">
+                        {req.images.map((img, idx) => (
+                          <img key={idx} src={img} alt={`Evidence ${idx}`} className="h-20 w-20 object-cover rounded-lg border border-slate-200 flex-shrink-0" />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
