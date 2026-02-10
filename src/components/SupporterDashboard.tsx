@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { EmergencyRequest } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Layers, Users, Filter, List, CheckCircle, X } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { Layers, Users, Filter, List, CheckCircle, X, PlayCircle } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -18,6 +18,15 @@ import 'leaflet/dist/leaflet.css';
 //     L: any;
 //   }
 // }
+
+// Helper Component for Map Refresh
+const MapRefresher: React.FC = () => {
+  const map = useMap();
+  React.useEffect(() => {
+    setTimeout(() => map.invalidateSize(), 100);
+  }, [map]);
+  return null;
+};
 
 interface SupporterDashboardProps {
   requests: EmergencyRequest[];
@@ -51,6 +60,7 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
 
   // Rescue Modal State
   const [selectedReqForRescue, setSelectedReqForRescue] = useState<EmergencyRequest | null>(null);
+  const [rescueMode, setRescueMode] = useState<'start' | 'finish'>('finish');
   const [rescueForm, setRescueForm] = useState({
     supporterName: '',
     supporterPhone: '',
@@ -60,8 +70,9 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
 
   const supporterPhoneRef = React.useRef<HTMLInputElement>(null);
 
-  const handleOpenRescueModal = (req: EmergencyRequest) => {
+  const handleOpenRescueModal = (req: EmergencyRequest, mode: 'start' | 'finish') => {
     setSelectedReqForRescue(req);
+    setRescueMode(mode);
     // Pre-fill people count just in case users want default
     setRescueForm({
       supporterName: '',
@@ -85,19 +96,34 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
       return;
     }
 
-    const updatedReq: EmergencyRequest = {
-      ...selectedReqForRescue,
-      status: 'resolved',
-      rescueInfo: {
-        supporterName: rescueForm.supporterName,
-        supporterPhone: rescueForm.supporterPhone,
-        peopleRescued: Number(rescueForm.peopleRescued),
-        timestamp: Date.now(),
-        notes: rescueForm.notes
-      }
-    };
+    if (rescueMode === 'start') {
+      const updatedReq: EmergencyRequest = {
+        ...selectedReqForRescue,
+        status: 'resolving',
+        rescueInfo: {
+          supporterName: rescueForm.supporterName,
+          supporterPhone: rescueForm.supporterPhone,
+          peopleRescued: 0, // Not rescued yet
+          timestamp: Date.now(),
+          notes: "Đang tiếp cận hiện trường..."
+        }
+      };
+      onUpdateRequest(updatedReq);
+    } else {
+      const updatedReq: EmergencyRequest = {
+        ...selectedReqForRescue,
+        status: 'resolved',
+        rescueInfo: {
+          supporterName: rescueForm.supporterName,
+          supporterPhone: rescueForm.supporterPhone,
+          peopleRescued: Number(rescueForm.peopleRescued),
+          timestamp: Date.now(),
+          notes: rescueForm.notes
+        }
+      };
+      onUpdateRequest(updatedReq);
+    }
 
-    onUpdateRequest(updatedReq);
     setSelectedReqForRescue(null); // Close modal
   };
 
@@ -202,9 +228,12 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
       {selectedReqForRescue && (
         <div className="fixed inset-0 bg-black/50 z-[1000] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-up">
-            <div className="bg-indigo-600 p-4 flex justify-between items-center text-white">
-              <h3 className="font-bold text-lg flex items-center gap-2"><CheckCircle className="w-5 h-5" /> Báo Cáo Cứu Hộ Thành Công</h3>
-              <button onClick={() => setSelectedReqForRescue(null)} className="hover:bg-indigo-700 p-1 rounded"><X className="w-5 h-5" /></button>
+            <div className={`${rescueMode === 'start' ? 'bg-blue-600' : 'bg-green-600'} p-4 flex justify-between items-center text-white`}>
+              <h3 className="font-bold text-lg flex items-center gap-2">
+                {rescueMode === 'start' ? <PlayCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
+                {rescueMode === 'start' ? 'Xác Nhận Cứu Hộ (Tiếp cận)' : 'Báo Cáo Cứu Hộ Thành Công'}
+              </h3>
+              <button onClick={() => setSelectedReqForRescue(null)} className="hover:bg-white/20 p-1 rounded"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={handleRescueSubmit} className="p-6 space-y-4">
               <div className="p-3 bg-slate-50 rounded border border-slate-200 text-sm">
@@ -233,25 +262,30 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                   onChange={e => setRescueForm({ ...rescueForm, supporterPhone: e.target.value })}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Số người đã cứu được</label>
-                <input required type="number" min="1" className="w-full p-2 border rounded font-bold text-lg"
-                  value={rescueForm.peopleRescued}
-                  onChange={e => setRescueForm({ ...rescueForm, peopleRescued: Number(e.target.value) })}
-                />
-              </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Ghi chú thêm</label>
-                <textarea className="w-full p-2 border rounded" placeholder="Tình trạng nạn nhân, nơi đưa về..."
-                  rows={2}
-                  value={rescueForm.notes}
-                  onChange={e => setRescueForm({ ...rescueForm, notes: e.target.value })}
-                />
-              </div>
+              {rescueMode === 'finish' && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Số người đã cứu được</label>
+                  <input required type="number" min="1" className="w-full p-2 border rounded font-bold text-lg"
+                    value={rescueForm.peopleRescued}
+                    onChange={e => setRescueForm({ ...rescueForm, peopleRescued: Number(e.target.value) })}
+                  />
+                </div>
+              )}
 
-              <button type="submit" className="w-full py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition shadow-lg mt-2">
-                Xác Nhận Đã Cứu Hộ
+              {rescueMode === 'finish' && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Ghi chú thêm</label>
+                  <textarea className="w-full p-2 border rounded" placeholder="Tình trạng nạn nhân, nơi đưa về..."
+                    rows={2}
+                    value={rescueForm.notes}
+                    onChange={e => setRescueForm({ ...rescueForm, notes: e.target.value })}
+                  />
+                </div>
+              )}
+
+              <button type="submit" className={`w-full py-3 ${rescueMode === 'start' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'} text-white font-bold rounded-lg transition shadow-lg mt-2`}>
+                {rescueMode === 'start' ? 'Bắt Đầu Di Chuyển / Cứu Hộ' : 'Xác Nhận Đã Cứu Xong'}
               </button>
             </form>
           </div>
@@ -273,6 +307,7 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
             zoom={12}
             style={{ height: '100%', width: '100%' }}
           >
+            <MapRefresher />
             <TileLayer
               attribution='&copy; OpenStreetMap'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -295,6 +330,8 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
 
                 if (req.status === 'resolved') {
                   bgColor = 'bg-green-500';
+                } else if (req.status === 'resolving') {
+                  bgColor = 'bg-blue-500';
                 } else if (req.priority === 'High') {
                   bgColor = 'bg-red-600';
                 } else if (req.priority === 'Medium') {
@@ -357,9 +394,16 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                           {req.demographics.disabled > 0 && <div className="text-purple-600 font-semibold text-xs">• {req.demographics.disabled} Người khuyết tật</div>}
                         </div>
 
-                        <div className="mt-2 text-[10px] text-slate-400 text-right">
-                          {new Date(req.timestamp).toLocaleString('vi-VN')}
-                        </div>
+                        {req.status !== 'resolved' ? (
+                          <div className="mt-2 text-[10px] text-right">
+                            {req.status === 'resolving' && <span className="text-blue-600 font-bold mr-2">🔵 Đang có người đến cứu...</span>}
+                            <span className="text-slate-400">{new Date(req.timestamp).toLocaleString('vi-VN')}</span>
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-[10px] text-slate-400 text-right">
+                            {new Date(req.timestamp).toLocaleString('vi-VN')}
+                          </div>
+                        )}
 
                         <button
                           onClick={() => {
@@ -525,21 +569,37 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                       <p className="text-xs font-bold text-slate-500 mb-2 uppercase">Hình ảnh hiện trường:</p>
                       <div className="flex gap-2 overflow-x-auto pb-2">
                         {req.images.map((img, idx) => (
-                          <img key={idx} src={img} alt={`Evidence ${idx}`} className="h-20 w-20 object-cover rounded-lg border border-slate-200 flex-shrink-0" />
+                          <img key={idx} src={img} loading="lazy" alt={`Evidence ${idx}`} className="h-20 w-20 object-cover rounded-lg border border-slate-200 flex-shrink-0" />
                         ))}
                       </div>
                     </div>
                   )}
 
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
-                    {req.status !== 'resolved' ? (
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end gap-2">
+                    {req.status === 'pending' && (
                       <button
-                        onClick={() => handleOpenRescueModal(req)}
-                        className="px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded flex items-center gap-2 hover:bg-indigo-700 transition shadow-sm"
+                        onClick={() => handleOpenRescueModal(req, 'start')}
+                        className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded flex items-center gap-2 hover:bg-blue-700 transition shadow-sm"
                       >
-                        <CheckCircle className="w-4 h-4" /> Cập nhật cứu hộ
+                        <PlayCircle className="w-4 h-4" /> Bắt đầu cứu hộ
                       </button>
-                    ) : (
+                    )}
+
+                    {req.status === 'resolving' && (
+                      <div className="flex gap-2 w-full justify-between items-center">
+                        <span className="text-xs text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded border border-blue-100 animate-pulse">
+                          🔵 Đang được cứu bởi: {req.rescueInfo?.supporterName}
+                        </span>
+                        <button
+                          onClick={() => handleOpenRescueModal(req, 'finish')}
+                          className="px-4 py-2 bg-green-600 text-white text-sm font-bold rounded flex items-center gap-2 hover:bg-green-700 transition shadow-sm"
+                        >
+                          <CheckCircle className="w-4 h-4" /> Xác nhận đã cứu xong
+                        </button>
+                      </div>
+                    )}
+
+                    {req.status === 'resolved' && (
                       <div className="px-4 py-2 bg-green-100 text-green-700 text-sm font-bold rounded flex items-center gap-2 border border-green-200">
                         <CheckCircle className="w-4 h-4" /> Đã được cứu bởi {req.rescueInfo?.supporterName}
                       </div>

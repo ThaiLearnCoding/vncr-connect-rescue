@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { EmergencyRequest, LocationState, Demographics } from '../types';
 import { analyzeEmergencyReport } from '../services/geminiService';
-import { Loader2, Navigation, Clock, MessageSquare, Phone, Users, CheckCircle, Image as ImageIcon } from 'lucide-react';
+import { Loader2, Navigation, Clock, MessageSquare, Phone, Users, CheckCircle, Image as ImageIcon, RotateCw } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { compressImage } from '../utils/imageCompressor';
 
 // Custom Map Pin Icon (Matching Supporter Dashboard style)
 const createPinIcon = () => {
@@ -26,6 +27,11 @@ interface LocationMarkerProps {
 const LocationMarker: React.FC<LocationMarkerProps> = ({ position, setPosition }) => {
   const map = useMap();
   useEffect(() => {
+    // Fix map tiling issues on init
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+
     if (position) {
       map.flyTo(position, map.getZoom());
     }
@@ -80,6 +86,7 @@ export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState })
   });
 
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  const [mapKey, setMapKey] = useState(0);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -89,14 +96,21 @@ export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState })
       }
 
       const files = Array.from(e.target.files);
-      files.forEach(file => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          if (typeof reader.result === 'string') {
-            setSelectedImages(prev => [...prev, reader.result as string].slice(0, 5));
-          }
-        };
-        reader.readAsDataURL(file);
+      files.forEach(async (file) => {
+        try {
+          const compressed = await compressImage(file);
+          setSelectedImages(prev => [...prev, compressed].slice(0, 5));
+        } catch (err) {
+          console.error("Compression error:", err);
+          // Fallback to normal read if compression fails
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (typeof reader.result === 'string') {
+              setSelectedImages(prev => [...prev, reader.result as string].slice(0, 5));
+            }
+          };
+          reader.readAsDataURL(file);
+        }
       });
     }
   };
@@ -328,8 +342,9 @@ export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState })
                 }}
                 onInput={handleInputResetValidity}
               />
-              <div className="h-64 w-full bg-slate-100 z-0">
+              <div className="h-64 w-full bg-slate-100 z-0 relative">
                 <MapContainer
+                  key={mapKey} // Force re-render on reload
                   center={(locationState.latitude && locationState.longitude) ? { lat: locationState.latitude, lng: locationState.longitude } : { lat: 13.0882, lng: 109.3149 }}
                   zoom={13}
                   style={{ height: '100%', width: '100%', cursor: 'crosshair' }} // Explicit cursor for better UX
@@ -340,6 +355,16 @@ export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState })
                   />
                   <LocationMarker position={pinnedLocation} setPosition={setPinnedLocation} />
                 </MapContainer>
+
+                {/* Reload Map Button */}
+                <button
+                  type="button"
+                  onClick={() => setMapKey(prev => prev + 1)}
+                  className="absolute bottom-2 right-2 z-[400] bg-white text-slate-600 p-1.5 rounded shadow-md border border-slate-300 text-xs font-bold flex items-center gap-1 hover:bg-slate-50"
+                  title="Nhấn nếu bản đồ không hiển thị"
+                >
+                  <RotateCw className="w-3 h-3" /> Tải lại bản đồ
+                </button>
               </div>
               <div className="p-2 bg-slate-50 text-xs text-slate-600 text-center border-t border-slate-200">
                 {pinnedLocation ?
@@ -357,7 +382,7 @@ export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState })
               <div className="grid grid-cols-5 gap-2 mb-3">
                 {selectedImages.map((img, idx) => (
                   <div key={idx} className="relative group aspect-square">
-                    <img src={img} alt={`Preview ${idx}`} className="w-full h-full object-cover rounded-lg border border-slate-200" />
+                    <img src={img} loading="lazy" alt={`Preview ${idx}`} className="w-full h-full object-cover rounded-lg border border-slate-200" />
                     <button
                       type="button"
                       onClick={() => removeImage(idx)}
