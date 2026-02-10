@@ -30,6 +30,24 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
   const [filterLocation, setFilterLocation] = useState<string>('all');
   const [showResolved, setShowResolved] = useState(false);
   const [isFiltered, setIsFiltered] = useState(false);
+  const [targetScrollId, setTargetScrollId] = useState<string | null>(null);
+
+  // Auto-scroll effect when target changes (and list is theoretically updated)
+  React.useEffect(() => {
+    if (targetScrollId) {
+      // Small timeout to allow render cycle to complete if filters just changed
+      const timer = setTimeout(() => {
+        const element = document.getElementById(`request-card-${targetScrollId}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          element.classList.add('ring-4', 'ring-indigo-300');
+          setTimeout(() => element.classList.remove('ring-4', 'ring-indigo-300'), 2000);
+        }
+        setTargetScrollId(null);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [targetScrollId, isFiltered, showResolved, filterPriority, filterLocation]); // Re-run if these change while target is pending
 
   // Rescue Modal State
   const [selectedReqForRescue, setSelectedReqForRescue] = useState<EmergencyRequest | null>(null);
@@ -39,6 +57,8 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
     peopleRescued: 0,
     notes: ''
   });
+
+  const supporterPhoneRef = React.useRef<HTMLInputElement>(null);
 
   const handleOpenRescueModal = (req: EmergencyRequest) => {
     setSelectedReqForRescue(req);
@@ -54,6 +74,16 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
   const handleRescueSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedReqForRescue || !onUpdateRequest) return;
+
+    // Phone Validation
+    const phoneRegex = /^0\d{9}$/;
+    if (!phoneRegex.test(rescueForm.supporterPhone)) {
+      if (supporterPhoneRef.current) {
+        supporterPhoneRef.current.setCustomValidity("Số điện thoại không hợp lệ! Phải bắt đầu bằng số 0 và có 10 chữ số.");
+        supporterPhoneRef.current.reportValidity();
+      }
+      return;
+    }
 
     const updatedReq: EmergencyRequest = {
       ...selectedReqForRescue,
@@ -192,8 +222,14 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Số điện thoại liên hệ</label>
-                <input required className="w-full p-2 border rounded" placeholder="09xxxx..."
+                <input
+                  required
+                  type="tel"
+                  ref={supporterPhoneRef}
+                  className="w-full p-2 border rounded"
+                  placeholder="09xxxx..."
                   value={rescueForm.supporterPhone}
+                  onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
                   onChange={e => setRescueForm({ ...rescueForm, supporterPhone: e.target.value })}
                 />
               </div>
@@ -325,18 +361,43 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                           {new Date(req.timestamp).toLocaleString('vi-VN')}
                         </div>
 
-                        {req.status !== 'resolved' ? (
-                          <button
-                            onClick={() => handleOpenRescueModal(req)}
-                            className="w-full mt-2 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded flex items-center justify-center gap-1 hover:bg-indigo-700 transition"
-                          >
-                            <CheckCircle className="w-3 h-3" /> Cập nhật cứu hộ
-                          </button>
-                        ) : (
-                          <div className="w-full mt-2 py-1.5 bg-green-100 text-green-700 text-xs font-bold rounded flex items-center justify-center gap-1 border border-green-200">
-                            <CheckCircle className="w-3 h-3" /> Đã được cứu bởi {req.rescueInfo?.supporterName}
-                          </div>
-                        )}
+                        <button
+                          onClick={() => {
+                            // Check if element exists currently
+                            const element = document.getElementById(`request-card-${req.id}`);
+
+                            if (element) {
+                              // If visible, just scroll
+                              element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              element.classList.add('ring-4', 'ring-indigo-300');
+                              setTimeout(() => element.classList.remove('ring-4', 'ring-indigo-300'), 2000);
+                            } else {
+                              // If not visible, force filters to show it
+                              setFilterPriority('all');
+                              setFilterLocation('all');
+                              // If it's resolved but we hid resolved, show them.
+                              // If it's NOT resolved but we checked "Show only resolved" (if that was the logic), toggle.
+                              // Our current logic: showResolved checkbox means "Show Rescued Cases".
+                              // If req is resolved, showResolved MUST be true.
+                              // If req is NOT resolved, showResolved depends on filter logic.
+                              // Actually, the filter says:
+                              // if (!showResolved && req.status === 'resolved') return false; (Hides resolved)
+                              // if (showResolved && req.status !== 'resolved') return false;  (Hides pending) => Wait, this means Is strictly Toggle?
+
+                              if (req.status === 'resolved') {
+                                setShowResolved(true);
+                              } else {
+                                setShowResolved(false);
+                              }
+
+                              setIsFiltered(true); // Force list to show
+                              setTargetScrollId(req.id); // Queue scroll
+                            }
+                          }}
+                          className="w-full mt-2 py-1.5 bg-white text-indigo-600 border border-indigo-600 text-xs font-bold rounded flex items-center justify-center gap-1 hover:bg-indigo-50 transition"
+                        >
+                          <List className="w-3 h-3" /> Xem chi tiết
+                        </button>
                       </div>
                     </Popup>
                   </Marker>
@@ -415,7 +476,7 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                 <h3 className="font-bold text-slate-700">Kết quả: {filteredRequests.length} trường hợp</h3>
               </div>
               {filteredRequests.map(req => (
-                <div key={req.id} className={`bg-white rounded-xl p-5 shadow-sm border-l-4 transition-all hover:shadow-md ${req.priority === 'High' ? 'border-l-red-500' :
+                <div id={`request-card-${req.id}`} key={req.id} className={`bg-white rounded-xl p-5 shadow-sm border-l-4 transition-all hover:shadow-md ${req.priority === 'High' ? 'border-l-red-500' :
                   req.priority === 'Medium' ? 'border-l-orange-500' : 'border-l-yellow-400'
                   }`}>
                   <div className="flex justify-between items-start mb-3">
@@ -469,6 +530,21 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                       </div>
                     </div>
                   )}
+
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
+                    {req.status !== 'resolved' ? (
+                      <button
+                        onClick={() => handleOpenRescueModal(req)}
+                        className="px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded flex items-center gap-2 hover:bg-indigo-700 transition shadow-sm"
+                      >
+                        <CheckCircle className="w-4 h-4" /> Cập nhật cứu hộ
+                      </button>
+                    ) : (
+                      <div className="px-4 py-2 bg-green-100 text-green-700 text-sm font-bold rounded flex items-center gap-2 border border-green-200">
+                        <CheckCircle className="w-4 h-4" /> Đã được cứu bởi {req.rescueInfo?.supporterName}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
