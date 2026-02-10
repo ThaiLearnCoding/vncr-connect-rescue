@@ -49,11 +49,14 @@ const LocationMarker: React.FC<LocationMarkerProps> = ({ position, setPosition }
 interface NeedyFormProps {
   onSubmit: (request: EmergencyRequest) => void;
   locationState: LocationState;
+  requests?: EmergencyRequest[];
 }
 
-export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState }) => {
+export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState, requests = [] }) => {
   const phoneInputRef = React.useRef<HTMLInputElement>(null);
   const totalPeopleInputRef = React.useRef<HTMLInputElement>(null);
+
+  const [submittedRequestId, setSubmittedRequestId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -216,6 +219,7 @@ export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState })
       };
 
       onSubmit(newRequest);
+      setSubmittedRequestId(newRequest.id);
       setIsSuccess(true);
 
       // Reset form
@@ -246,21 +250,56 @@ export const NeedyForm: React.FC<NeedyFormProps> = ({ onSubmit, locationState })
   };
 
   if (isSuccess) {
+    const currentRequest = requests.find(r => r.id === submittedRequestId);
+    const isResolving = currentRequest?.status === 'resolving';
+    const isResolved = currentRequest?.status === 'resolved';
+    const supporter = currentRequest?.rescueInfo;
+
     return (
       <div className="max-w-2xl mx-auto p-4 md:p-6 animate-fade-in">
-        <div className="bg-white rounded-xl shadow-lg border border-green-100 p-8 text-center space-y-6">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-            <CheckCircle className="w-10 h-10 text-green-600" />
+        <div className={`bg-white rounded-xl shadow-lg border ${isResolving ? 'border-blue-100' : 'border-green-100'} p-8 text-center space-y-6`}>
+          <div className={`w-20 h-20 ${isResolving ? 'bg-blue-100' : 'bg-green-100'} rounded-full flex items-center justify-center mx-auto ${isResolving ? 'animate-pulse' : ''}`}>
+            {isResolving ? <Users className="w-10 h-10 text-blue-600" /> : <CheckCircle className="w-10 h-10 text-green-600" />}
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-slate-800">Đã gửi yêu cầu thành công!</h2>
-            <p className="text-slate-600 mt-2">Hệ thống đã nhận được thông tin và vị trí của bạn. Vui lòng giữ liên lạc và bình tĩnh chờ đợi.</p>
+            <h2 className="text-2xl font-bold text-slate-800">
+              {isResolving ? 'Đội cứu hộ đang đến!' : (isResolved ? 'Cứu hộ hoàn tất!' : 'Đã gửi yêu cầu thành công!')}
+            </h2>
+
+            {!isResolving && !isResolved && (
+              <p className="text-slate-600 mt-2">Hệ thống đã nhận được thông tin và vị trí của bạn. Vui lòng giữ liên lạc và bình tĩnh chờ đợi.</p>
+            )}
+
+            {isResolving && (
+              <p className="text-blue-600 mt-2 font-medium">Đội cứu hộ đã tiếp nhận và đang di chuyển đến vị trí của bạn.</p>
+            )}
+            {isResolved && (
+              <p className="text-green-600 mt-2 font-medium">Bạn đã được xác nhận là an toàn.</p>
+            )}
           </div>
-          <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 text-sm text-slate-500">
-            <p>Đội cứu trợ sẽ liên hệ với bạn qua số điện thoại đã cung cấp sớm nhất có thể.</p>
-          </div>
+
+          {(isResolving || isResolved) && supporter ? (
+            <div className={`p-6 rounded-lg border ${isResolving ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'} text-left space-y-3`}>
+              <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                <Users className="w-5 h-5" /> Thông tin hội cứu trợ:
+              </h3>
+              <div className="space-y-1">
+                <p><span className="font-semibold">Tên:</span> {supporter.supporterName}</p>
+                <p><span className="font-semibold">SĐT:</span> <a href={`tel:${supporter.supporterPhone}`} className="text-blue-700 font-bold underline">{supporter.supporterPhone}</a></p>
+                {supporter.notes && <p><span className="font-semibold">Ghi chú:</span> {supporter.notes}</p>}
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 text-sm text-slate-500">
+              <p>Đội cứu trợ sẽ liên hệ với bạn qua số điện thoại đã cung cấp sớm nhất có thể.</p>
+            </div>
+          )}
+
           <button
-            onClick={() => setIsSuccess(false)}
+            onClick={() => {
+              setIsSuccess(false);
+              setSubmittedRequestId(null);
+            }}
             className="px-6 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition w-full md:w-auto"
           >
             Gửi yêu cầu khác

@@ -143,7 +143,7 @@ const App: React.FC = () => {
 
         {mode === 'needy' && (
           <div className="animate-slide-up">
-            <NeedyForm onSubmit={handleNewRequest} locationState={locationState} />
+            <NeedyForm onSubmit={handleNewRequest} locationState={locationState} requests={requests} />
           </div>
         )}
 

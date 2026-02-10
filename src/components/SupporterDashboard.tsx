@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { EmergencyRequest } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Layers, Users, Filter, List, CheckCircle, X, PlayCircle } from 'lucide-react';
+import { Layers, Users, Filter, List, CheckCircle, X, PlayCircle, Phone } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
@@ -529,7 +529,9 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                       <div className="flex items-center gap-2 text-sm text-slate-500 mt-1">
                         <span className="flex items-center gap-1 font-bold bg-slate-100 px-2 py-1 rounded text-slate-700"><Users className="w-3 h-3" /> {req.demographics.totalPeople} người</span>
                         <span className="text-slate-400">|</span>
-                        <span>{req.phone}</span>
+                        <a href={`tel:${req.phone}`} className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1">
+                          <Phone className="w-3 h-3" /> {req.phone}
+                        </a>
                       </div>
                     </div>
                     <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase ${req.priority === 'High' ? 'bg-red-100 text-red-700' :
@@ -575,6 +577,27 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                     </div>
                   )}
 
+                  {(req.status === 'resolving' || req.status === 'resolved') && req.rescueInfo && (
+                    <div className={`mt-3 p-3 rounded-lg border text-sm ${req.status === 'resolving' ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
+                      <div className={`font-bold flex items-center gap-2 mb-2 ${req.status === 'resolving' ? 'text-blue-800' : 'text-green-800'}`}>
+                        <Users className="w-4 h-4" />
+                        {req.status === 'resolving' ? 'THÔNG TIN ĐỘI CỨU HỘ (ĐANG DI CHUYỂN):' : 'ĐÃ ĐƯỢC CỨU BỞI:'}
+                      </div>
+                      <div className="space-y-1 ml-6 text-slate-700">
+                        <p><span className="font-semibold">Tên đội/người:</span> {req.rescueInfo.supporterName}</p>
+                        <p><span className="font-semibold">SĐT Liên hệ:</span> <a href={`tel:${req.rescueInfo.supporterPhone}`} className="font-bold underline hover:text-indigo-600">{req.rescueInfo.supporterPhone}</a></p>
+                        {req.rescueInfo.notes && (
+                          <p className="italic text-slate-600 mt-1">"{req.rescueInfo.notes}"</p>
+                        )}
+                        {req.rescueInfo.timestamp && (
+                          <p className="text-xs text-slate-500 pt-1 border-t border-slate-200/50 mt-1">
+                            Thời gian cập nhật: {new Date(req.rescueInfo.timestamp).toLocaleString('vi-VN')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end gap-2">
                     {req.status === 'pending' && (
                       <button
@@ -586,10 +609,7 @@ export const SupporterDashboard: React.FC<SupporterDashboardProps> = ({ requests
                     )}
 
                     {req.status === 'resolving' && (
-                      <div className="flex gap-2 w-full justify-between items-center">
-                        <span className="text-xs text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded border border-blue-100 animate-pulse">
-                          🔵 Đang được cứu bởi: {req.rescueInfo?.supporterName}
-                        </span>
+                      <div className="flex gap-2 w-full justify-end items-center">
                         <button
                           onClick={() => handleOpenRescueModal(req, 'finish')}
                           className="px-4 py-2 bg-green-600 text-white text-sm font-bold rounded flex items-center gap-2 hover:bg-green-700 transition shadow-sm"
